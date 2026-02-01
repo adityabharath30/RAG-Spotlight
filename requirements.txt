@@ -31,3 +31,8 @@ keyring>=24.0.0  # macOS Keychain integration
 
 # Image processing
 Pillow>=10.0.0  # For image dimension checking
+
+# Testing (dev)
+pytest>=7.4.0
+pytest-cov>=4.1.0
+ruff>=0.1.0

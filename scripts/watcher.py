@@ -28,6 +28,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from tqdm import tqdm
+
 # Add project root to path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -49,12 +51,25 @@ from app.vector_store import FAISSVectorStore
 from app.scanner import FileScanner, ScanManifest, ScannedFile
 from app.scanner_config import get_config, reload_config, ScannerConfig
 
+# Import startup to trigger auto-initialization (migrations, etc.)
+try:
+    import app.startup  # noqa: F401
+except ImportError:
+    pass
+
 # Import security/audit if available
 try:
     from app.security import get_audit_logger
     AUDIT_AVAILABLE = True
 except ImportError:
     AUDIT_AVAILABLE = False
+
+# Import SQLite manifest if available
+try:
+    from app.manifest_db import SQLiteManifest
+    SQLITE_MANIFEST_AVAILABLE = True
+except ImportError:
+    SQLITE_MANIFEST_AVAILABLE = False
 
 
 class DeviceIndexer:
@@ -173,12 +188,17 @@ class DeviceIndexer:
             print(f"   ✅ Added {len(texts)} chunks")
             return len(texts)
     
-    def index_batch(self, files: list[ScannedFile]) -> tuple[int, int]:
+    def index_batch(
+        self, 
+        files: list[ScannedFile], 
+        show_progress: bool = True
+    ) -> tuple[int, int]:
         """
         Index a batch of files.
         
         Args:
             files: List of ScannedFile objects to index
+            show_progress: Whether to show progress bar
         
         Returns:
             Tuple of (files_processed, total_chunks_added)
@@ -186,19 +206,37 @@ class DeviceIndexer:
         files_processed = 0
         total_chunks = 0
         
-        for scanned_file in files:
+        # Create progress bar
+        file_iter = files
+        if show_progress and len(files) > 1:
+            file_iter = tqdm(
+                files,
+                desc="Indexing",
+                unit="file",
+                ncols=80,
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+            )
+        
+        for scanned_file in file_iter:
             try:
                 chunks = self.index_file(scanned_file.path)
                 if chunks > 0:
                     files_processed += 1
                     total_chunks += chunks
                 
+                # Update progress bar description
+                if show_progress and hasattr(file_iter, 'set_postfix'):
+                    file_iter.set_postfix(chunks=total_chunks, files=files_processed)
+                
                 # Pause between files to avoid overwhelming system
                 if self.config.batch_pause_seconds > 0:
                     time.sleep(self.config.batch_pause_seconds)
             
             except Exception as e:
-                print(f"   ❌ Error indexing {scanned_file.path.name}: {e}")
+                if show_progress and hasattr(file_iter, 'write'):
+                    file_iter.write(f"   ❌ Error: {scanned_file.path.name}: {e}")
+                else:
+                    print(f"   ❌ Error indexing {scanned_file.path.name}: {e}")
         
         return files_processed, total_chunks
     
@@ -213,28 +251,24 @@ class DeviceIndexer:
         print("🔍 Starting full device scan...")
         print("=" * 60)
         
-        # Get list of files needing indexing
-        files_to_index = list(self.scanner.scan_for_changes())
+        # Get list of files needing indexing with progress
+        print("📂 Discovering files...")
+        files_to_index = []
+        with tqdm(desc="Scanning", unit="dir", ncols=80) as pbar:
+            for scanned_file in self.scanner.scan_for_changes():
+                files_to_index.append(scanned_file)
+                pbar.update(0)  # Keep spinner active
+                pbar.set_postfix(found=len(files_to_index))
         
         if not files_to_index:
             print("✅ All files are up to date!")
             self.manifest.mark_full_scan_complete()
             return 0, 0
         
-        print(f"📋 Found {len(files_to_index)} files to index")
+        print(f"\n📋 Found {len(files_to_index)} files to index")
         
-        # Process in batches
-        batch_size = self.config.batch_size
-        files_processed = 0
-        total_chunks = 0
-        
-        for i in range(0, len(files_to_index), batch_size):
-            batch = files_to_index[i:i + batch_size]
-            print(f"\n📦 Processing batch {i // batch_size + 1}/{(len(files_to_index) + batch_size - 1) // batch_size}")
-            
-            processed, chunks = self.index_batch(batch)
-            files_processed += processed
-            total_chunks += chunks
+        # Process all files with single progress bar
+        files_processed, total_chunks = self.index_batch(files_to_index, show_progress=True)
         
         # Check for deleted files
         deleted = self.scanner.find_deleted_files()

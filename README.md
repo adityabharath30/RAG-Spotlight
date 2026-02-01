@@ -1,34 +1,93 @@
 # Personal Spotlight Search
 
+[![CI](https://github.com/adityabharath30/RAG-Spotlight/actions/workflows/ci.yml/badge.svg)](https://github.com/adityabharath30/RAG-Spotlight/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A local, Spotlight-style semantic search system for your personal documents. Ask questions in natural language and get precise, extractive answers powered by GPT-4o-mini.
 
-![Spotlight Demo](docs/demo.png)
+<!-- Demo GIF placeholder - replace with actual recording -->
+![Spotlight Demo](docs/demo.gif)
 
 ## Features
 
 - 🔍 **Semantic Search** — Find documents by meaning, not just keywords
 - 🤖 **GPT-Powered Extraction** — Get precise answers, not document dumps
 - ⚡ **Instant Results** — Sub-second search with cached embeddings
-- ⌨️ **Keyboard-First** — Spotlight-style UX with global hotkey
-- 📁 **Auto-Indexing** — Watch folder for new documents
-- 🔒 **100% Local** — Your data never leaves your machine (except GPT calls)
+- ⌨️ **Keyboard-First** — Spotlight-style UX with global hotkey (⌘+Shift+Space)
+- 📁 **Device-Wide Scanning** — Index documents across your entire Mac
+- 🔒 **Privacy-First** — Encrypted storage, audit logging, local embeddings
+- 🖼️ **Image Support** — Extract text and descriptions from images via Vision API
+- 🗑️ **Data Control** — Export or delete all your data with one command
+
+## Technical Highlights
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| Vector Search | FAISS IndexFlatIP | Sub-millisecond similarity search |
+| Embeddings | SentenceTransformers | Local, privacy-preserving embeddings |
+| Extractive QA | GPT-4o-mini | 4-stage extraction pipeline |
+| Storage | SQLite + Encrypted Pickle | Fast queries, secure at rest |
+| UI | CustomTkinter | Native-feeling dark mode UI |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           USER INTERFACE                                     │
+│  spotlight_ui.py                    launcher.py (⌘+Shift+Space)             │
+└─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           SEARCH SERVICE                                     │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                      │
+│  │ Query Embed │ →  │ FAISS Search│ →  │ GPT Extract │                      │
+│  └─────────────┘    └─────────────┘    └─────────────┘                      │
+│         │                  │                  │                              │
+│         │         Hybrid Scoring:     4-Stage Pipeline:                      │
+│         │         • Semantic sim      • Per-chunk extraction                 │
+│         │         • Keyword overlap   • Candidate selection                  │
+│         │         • Length bonus      • Answer compression                   │
+└─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           DATA LAYER                                         │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                      │
+│  │ FAISS Index │    │ SQLite Meta │    │ Research Mem│                      │
+│  │ (vectors)   │    │ (file info) │    │ (past Q&A)  │                      │
+│  └─────────────┘    └─────────────┘    └─────────────┘                      │
+└─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           INGESTION PIPELINE                                 │
+│  scanner.py → ingestion.py → chunker.py → embeddings.py → vector_store.py  │
+│      │                                                                       │
+│      │  Parallel processing │ Sentence-aware │ Local embeddings             │
+│      │  Security filtering  │ ~200 words/chunk│ 384 dimensions              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# 1. Clone and install
+git clone https://github.com/adityabharath30/RAG-Spotlight.git
+cd RAG-Spotlight
 pip install -r requirements.txt
 
-# 2. Add your OpenAI API key to .env
+# 2. Add your OpenAI API key
 echo "OPENAI_API_KEY=sk-your-key-here" > .env
 
-# 3. Add documents to /docs folder
-cp ~/Documents/*.pdf docs/
+# 3. Configure directories to scan (edit scanner_config.yaml)
+# By default, scans ~/Documents and ~/Desktop
 
 # 4. Build the index
-python scripts/index_builder.py
+python scripts/watcher.py --scan-now
 
-# 5. Launch Spotlight
+# 5. Launch Spotlight UI
 python ui/spotlight_ui.py
 ```
 
@@ -40,182 +99,178 @@ python ui/spotlight_ui.py
 python ui/spotlight_ui.py
 ```
 
-- **Type to search** — Results appear instantly as you type
-- **↑/↓** — Navigate results
-- **Enter** — Open selected document
-- **Esc** — Close window
+| Key | Action |
+|-----|--------|
+| Type | Search as you type |
+| ↑/↓ | Navigate results |
+| Enter | Open document |
+| Esc | Close |
 
-### Global Hotkey Launcher
-
-```bash
-python scripts/launcher.py
-```
-
-Runs in background and listens for:
-- **⌘+Shift+Space** (macOS)
-- **Ctrl+Shift+Space** (Windows/Linux)
-
-### Auto-Indexing Watcher
+### Device-Wide Scanning
 
 ```bash
+# One-time full scan
+python scripts/watcher.py --scan-now
+
+# Real-time watcher (runs in background)
 python scripts/watcher.py
+
+# Check indexing stats
+python scripts/watcher.py --stats
 ```
 
-Watches `/docs` folder and automatically indexes new or modified files.
-
-### Manual Indexing
+### Privacy Controls
 
 ```bash
-python scripts/index_builder.py
-```
+# List all indexed files
+python -m app.privacy --list
 
-Rebuilds the entire index from scratch.
+# Export all your data
+python -m app.privacy --export ~/my-data-export
 
-## Project Structure
-
-```
-RAG/
-├── app/                    # Core package
-│   ├── config.py           # Paths and settings
-│   ├── ingestion.py        # Document extraction (PDF, DOCX, TXT)
-│   ├── chunker.py          # Sentence-aware text chunking
-│   ├── embeddings.py       # SentenceTransformer embeddings (cached)
-│   ├── vector_store.py     # FAISS vector index
-│   ├── query_intent.py     # Intent classification
-│   ├── llm.py              # OpenAI GPT integration
-│   ├── rag_answerer.py     # Extractive QA pipeline
-│   ├── search_service.py   # Search orchestration
-│   └── research_store.py   # Research memory index
-│
-├── ui/
-│   └── spotlight_ui.py     # Modern Spotlight UI
-│
-├── scripts/
-│   ├── index_builder.py    # Build FAISS index
-│   ├── launcher.py         # Global hotkey launcher
-│   └── watcher.py          # Auto-indexing watcher
-│
-├── docs/                   # Your documents go here
-├── data/                   # Generated indexes (auto-created)
-├── .env                    # API keys (create this)
-└── requirements.txt
+# Delete everything
+python -m app.privacy --delete-all
 ```
 
 ## Configuration
 
-### Environment Variables (.env)
+### scanner_config.yaml
 
-```bash
-# Required for GPT extraction
-OPENAI_API_KEY=sk-your-key-here
+```yaml
+# Directories to scan (explicit opt-in)
+scan_directories:
+  - ~/Documents
+  - ~/Desktop
 
-# Optional: Change embedding model
-EMBEDDING_MODEL=multi-qa-MiniLM-L6-cos-v1
+# Security: never index these
+excluded_file_patterns:
+  - "*.env"
+  - "*password*"
+  - "*credentials*"
+
+# Image processing (disabled by default - uses OpenAI Vision)
+process_images: false
+
+# Performance
+parallel_workers: 4
+
+# Privacy
+local_only_mode: false  # Set true to disable all cloud APIs
+enable_audit_logging: true
 ```
 
 ### Supported File Types
 
-- PDF (`.pdf`)
-- Word Documents (`.docx`)
-- Text Files (`.txt`, `.md`)
-- Spreadsheets (`.csv`, `.xlsx`)
+| Type | Extensions | Extraction Method |
+|------|------------|-------------------|
+| Documents | `.pdf`, `.docx` | PyPDF2, python-docx |
+| Text | `.txt`, `.md` | Direct read |
+| Spreadsheets | `.csv`, `.xlsx` | Pandas |
+| Images | `.jpg`, `.png`, `.gif` | OpenAI Vision API |
 
-## How It Works
+## Security & Privacy
 
-### 1. Indexing Pipeline
-
-```
-Documents → Text Extraction → Chunking → Embeddings → FAISS Index
-```
-
-- Documents are split into ~200-word chunks with sentence boundaries preserved
-- Each chunk is embedded using SentenceTransformers
-- Embeddings are stored in a FAISS index for fast similarity search
-
-### 2. Query Pipeline
-
-```
-Query → Embed → FAISS Search → Top Chunks → GPT Extraction → Answer
-```
-
-1. **Retrieval** — Query is embedded and matched against the index
-2. **Extraction** — GPT-4o-mini extracts the smallest answer span from each chunk
-3. **Selection** — Best answer is selected based on confidence and relevance
-4. **Compression** — Long answers are compressed to ≤25 words
-
-### 3. Research Memory
-
-Past queries and answers are stored in a separate FAISS index, enabling:
-- "What did I search for last week?"
-- Building on previous research
+| Feature | Description |
+|---------|-------------|
+| **Local Embeddings** | SentenceTransformers runs 100% locally |
+| **Encrypted Storage** | AES-128 encryption for index (optional) |
+| **Keychain Integration** | API keys stored in macOS Keychain |
+| **Audit Logging** | Every file access is logged |
+| **Data Export** | Export everything you've indexed |
+| **Data Deletion** | One-command complete data wipe |
 
 ## Performance
 
 | Metric | Value |
 |--------|-------|
-| Index Build | ~10 docs/sec |
+| Index Build | ~10 docs/sec (parallel) |
 | Search Latency | <500ms |
 | GPT Extraction | ~300ms/chunk |
-| Model Load | ~2s (first time, then cached) |
+| Model Load | ~2s (then cached) |
+| Memory Usage | ~500MB (with model) |
+
+## Development
+
+### Run Tests
+
+```bash
+# All tests
+pytest tests/ -v
+
+# With coverage
+pytest tests/ --cov=app --cov-report=html
+```
+
+### Code Quality
+
+```bash
+# Lint
+ruff check app/ scripts/ tests/
+
+# Security scan
+bandit -r app/ -ll
+```
+
+## Project Structure
+
+```
+RAG/
+├── app/                     # Core package
+│   ├── ingestion.py         # Document extraction (parallel)
+│   ├── chunker.py           # Sentence-aware chunking
+│   ├── embeddings.py        # SentenceTransformer (cached)
+│   ├── vector_store.py      # FAISS wrapper
+│   ├── rag_answerer.py      # 4-stage extraction pipeline
+│   ├── search_service.py    # Search orchestration
+│   ├── scanner.py           # Device-wide file discovery
+│   ├── scanner_config.py    # Configuration management
+│   ├── security.py          # Encryption, keychain, audit
+│   └── privacy.py           # Data export/deletion CLI
+│
+├── ui/
+│   └── spotlight_ui.py      # CustomTkinter Spotlight UI
+│
+├── scripts/
+│   ├── watcher.py           # Device scanner + real-time watcher
+│   ├── index_builder.py     # Manual index rebuild
+│   └── launcher.py          # Global hotkey launcher
+│
+├── tests/                   # Pytest test suite
+├── scanner_config.yaml      # User configuration
+└── requirements.txt
+```
 
 ## Troubleshooting
 
 ### "No module named 'app'"
 
-Run from the project root:
+Run from project root:
 ```bash
-cd /path/to/RAG
-python scripts/index_builder.py
+cd /path/to/RAG-Spotlight
+python scripts/watcher.py
 ```
 
 ### "OPENAI_API_KEY not found"
 
-Create `.env` file:
-```bash
-echo "OPENAI_API_KEY=sk-your-key" > .env
+Either create `.env` file or use keychain:
+```python
+from app.security import get_key_manager
+km = get_key_manager(DATA_DIR)
+km.set_api_key("OPENAI_API_KEY", "sk-your-key")
 ```
 
-### "No documents found"
+### Scanning is slow
 
-Add documents to the `/docs` folder:
-```bash
-mkdir -p docs
-cp ~/Documents/*.pdf docs/
-```
-
-### Slow first search
-
-The embedding model loads on first use (~2s). Use the launcher for pre-loading:
-```bash
-python scripts/launcher.py
-```
-
-## Development
-
-### Install Dev Dependencies
-
-```bash
-pip install -r requirements.txt
-pip install customtkinter pynput watchdog
-```
-
-### Run Tests
-
-```bash
-python -m pytest tests/
-```
-
-### Code Style
-
-```bash
-ruff check app/ scripts/ ui/
-```
+Check `scanner_config.yaml`:
+- Reduce `scan_directories`
+- Increase `parallel_workers`
+- Disable `process_images` (uses Vision API)
 
 ## License
 
-MIT License — Use freely for personal projects.
+MIT License — Use freely for personal and commercial projects.
 
-## Credits
+## Acknowledgments
 
 Built with:
 - [SentenceTransformers](https://www.sbert.net/) — Local embeddings

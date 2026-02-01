@@ -26,6 +26,13 @@ except ImportError:
 
 from app.search_service import SearchService
 
+# Try to import document utilities for source highlighting
+try:
+    from app.document_utils import open_document, find_answer_location
+    DOCUMENT_UTILS_AVAILABLE = True
+except ImportError:
+    DOCUMENT_UTILS_AVAILABLE = False
+
 
 # =============================================================================
 # COLOR SCHEME (Dark Spotlight-like)
@@ -65,6 +72,9 @@ class ModernSpotlightUI:
         self._selected_index: int = 0
         self._loading = False
         self._source_filepath: str = ""
+        self._answer_text: str = ""  # Store answer for source highlighting
+        self._source_page: int | None = None  # Store page number for PDFs
+        self._streaming_mode: bool = True  # Enable streaming by default
 
         # Configure appearance
         ctk.set_appearance_mode("dark")
@@ -226,6 +236,18 @@ class ModernSpotlightUI:
             text_color=COLORS["accent"],
         )
         self.mode_label.pack(side="right")
+        
+        # Settings button
+        self.settings_btn = ctk.CTkButton(
+            self.status_frame,
+            text="⚙️",
+            width=30,
+            height=24,
+            fg_color="transparent",
+            hover_color=COLORS["bg_hover"],
+            command=self._open_settings,
+        )
+        self.settings_btn.pack(side="right", padx=(0, 8))
 
     def _on_key_release(self, event) -> None:
         """Handle key release in search entry."""
@@ -237,7 +259,7 @@ class ModernSpotlightUI:
         self._search_job = self.root.after(200, self._run_search)
 
     def _run_search(self) -> None:
-        """Execute search."""
+        """Execute search with streaming support."""
         query = self.entry.get().strip()
         self._search_job = None
         self._clear_results()
@@ -252,17 +274,66 @@ class ModernSpotlightUI:
         self._loading = True
         self.loading_label.configure(text="⏳")
 
-        # Run search in thread to keep UI responsive
-        def do_search():
-            try:
-                result = self.search_service.answer(query, top_k=6)
-                self.root.after(0, lambda: self._display_results(result))
-            except Exception as e:
-                self.root.after(0, lambda: self._show_error(str(e)))
+        if self._streaming_mode:
+            # Use streaming search for better UX
+            def on_documents(docs):
+                """Called when documents are retrieved."""
+                self.root.after(0, lambda: self._show_documents_early(docs))
+            
+            def on_status(status):
+                """Called with status updates."""
+                self.root.after(0, lambda: self.loading_label.configure(
+                    text="🔍" if "Search" in status else "✨"
+                ))
+            
+            def on_answer_token(char):
+                """Called for each character - typewriter effect."""
+                self.root.after(0, lambda c=char: self._append_answer_char(c))
+            
+            def on_complete(result):
+                """Called when search completes."""
+                self.root.after(0, lambda: self._display_results(result, streaming_done=True))
+            
+            def do_streaming_search():
+                try:
+                    self.search_service.answer_streaming(
+                        query,
+                        on_documents=on_documents,
+                        on_status=on_status,
+                        on_answer_token=on_answer_token,
+                        on_complete=on_complete,
+                        top_k=6,
+                    )
+                except Exception as e:
+                    self.root.after(0, lambda: self._show_error(str(e)))
+            
+            threading.Thread(target=do_streaming_search, daemon=True).start()
+        else:
+            # Non-streaming search (fallback)
+            def do_search():
+                try:
+                    result = self.search_service.answer(query, top_k=6)
+                    self.root.after(0, lambda: self._display_results(result))
+                except Exception as e:
+                    self.root.after(0, lambda: self._show_error(str(e)))
 
-        threading.Thread(target=do_search, daemon=True).start()
+            threading.Thread(target=do_search, daemon=True).start()
+    
+    def _show_documents_early(self, documents: list[dict]) -> None:
+        """Show documents while extraction is in progress."""
+        self._documents = documents
+        if documents:
+            # Show answer frame for streaming
+            self.answer_frame.pack(fill="x", padx=12, pady=(0, 8))
+            self.answer_label.configure(text="")
+            self.source_label.configure(text="Finding answer...")
+    
+    def _append_answer_char(self, char: str) -> None:
+        """Append a character to the streaming answer display."""
+        current = self.answer_label.cget("text")
+        self.answer_label.configure(text=current + char)
 
-    def _display_results(self, payload: dict) -> None:
+    def _display_results(self, payload: dict, streaming_done: bool = False) -> None:
         """Display search results."""
         self._loading = False
         self.loading_label.configure(text="")
@@ -274,8 +345,10 @@ class ModernSpotlightUI:
         documents = payload.get("documents", [])
         mode = payload.get("mode", "")
 
-        # Store source filepath for clicking
+        # Store source info for clicking and highlighting
         self._source_filepath = filepath
+        self._answer_text = answer  # Store for source highlighting
+        self._source_page = payload.get("source_page")  # Store page number if available
 
         # Show mode indicator
         mode_text = {"fact_lookup": "🎯 Fact", "fulltext": "📄 Browse", "summary": "📝 Summary"}.get(mode, "")
@@ -284,8 +357,20 @@ class ModernSpotlightUI:
         if answerable and answer:
             # Show answer card with source - NO document list
             self.answer_frame.pack(fill="x", padx=12, pady=(0, 8))
-            self.answer_label.configure(text=answer)
-            self.source_label.configure(text=f"📄 {source}  (click to open)" if source else "")
+            
+            # If streaming was used, answer is already displayed; otherwise set it
+            if not streaming_done:
+                self.answer_label.configure(text=answer)
+            
+            # Build source label with page number if available
+            if source:
+                source_text = f"📄 {source}"
+                if self._source_page:
+                    source_text += f" (page {self._source_page})"
+                source_text += "  — click to open & highlight"
+                self.source_label.configure(text=source_text)
+            else:
+                self.source_label.configure(text="")
             
             # Store only the source document for navigation
             self._documents = [{"filepath": filepath, "filename": source}] if filepath else []
@@ -357,6 +442,8 @@ class ModernSpotlightUI:
             widget.destroy()
         self._documents = []
         self._selected_index = 0
+        self._answer_text = ""
+        self._source_page = None
         self.mode_label.configure(text="")
 
     def _select_prev(self, _) -> None:
@@ -386,12 +473,59 @@ class ModernSpotlightUI:
                 self._show_error(f"Could not open file: {e}")
 
     def _open_source(self, _) -> None:
-        """Open the source document (from answer card)."""
-        if self._source_filepath:
-            try:
+        """Open the source document with answer highlighting."""
+        if not self._source_filepath:
+            return
+        
+        try:
+            if DOCUMENT_UTILS_AVAILABLE and self._answer_text:
+                # Use document utils to open with text search/highlighting
+                # For PDFs, this will trigger find (Cmd+F) with the answer text
+                search_text = self._get_search_text()
+                success = open_document(self._source_filepath, search_text=search_text)
+                if not success:
+                    # Fallback to basic open
+                    subprocess.run(["open", self._source_filepath], check=False)
+            else:
+                # Basic open without highlighting
                 subprocess.run(["open", self._source_filepath], check=False)
-            except Exception as e:
-                self._show_error(f"Could not open file: {e}")
+        except Exception as e:
+            self._show_error(f"Could not open file: {e}")
+    
+    def _get_search_text(self) -> str:
+        """Get optimal search text for document highlighting."""
+        if not self._answer_text:
+            return ""
+        
+        # Get first meaningful phrase from the answer (first 5-8 words)
+        # This works better for PDF search than full answer
+        words = self._answer_text.split()
+        
+        if len(words) <= 6:
+            return self._answer_text
+        
+        # Take first meaningful segment (avoid starting with common words)
+        skip_starts = {"the", "a", "an", "is", "are", "was", "were", "it", "this", "that"}
+        start_idx = 0
+        for i, word in enumerate(words[:3]):
+            if word.lower() not in skip_starts:
+                start_idx = i
+                break
+        
+        # Return 5-6 words for reliable PDF search
+        return " ".join(words[start_idx:start_idx + 6])
+
+    def _open_settings(self) -> None:
+        """Open the settings UI."""
+        try:
+            # Launch settings in a separate process
+            subprocess.Popen(
+                [sys.executable, str(ROOT_DIR / "ui" / "settings_ui.py")],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            self._show_error(f"Could not open settings: {e}")
 
     def run(self) -> None:
         """Run the application."""

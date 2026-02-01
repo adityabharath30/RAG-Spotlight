@@ -165,3 +165,175 @@ def is_available() -> bool:
     """Check if LLM is available (API key exists)."""
     api_key = os.getenv("OPENAI_API_KEY")
     return bool(api_key and api_key.strip())
+
+
+# ============================================================================
+# Streaming Support
+# ============================================================================
+
+from typing import Generator, Callable
+
+
+def stream_answer(
+    query: str,
+    context: str,
+    on_token: Callable[[str], None] | None = None,
+) -> Generator[str, None, str]:
+    """
+    Stream an answer from GPT with real-time token output.
+    
+    Args:
+        query: The user's question
+        context: The context text to answer from
+        on_token: Optional callback for each token
+    
+    Yields:
+        Individual tokens as they arrive
+    
+    Returns:
+        The complete answer string
+    """
+    client = get_client()
+    
+    system_prompt = """You are a helpful assistant that answers questions based on the provided context.
+- Answer directly and concisely
+- Only use information from the context
+- If the answer isn't in the context, say so
+- Keep answers under 50 words when possible"""
+
+    user_prompt = f"""Context:
+{context}
+
+Question: {query}
+
+Answer:"""
+
+    try:
+        stream = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=200,
+            stream=True,
+        )
+        
+        full_response = []
+        
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                token = chunk.choices[0].delta.content
+                full_response.append(token)
+                
+                if on_token:
+                    on_token(token)
+                
+                yield token
+        
+        return "".join(full_response)
+        
+    except Exception as e:
+        logger.warning("Streaming failed: %s", e)
+        error_msg = "Unable to generate answer"
+        yield error_msg
+        return error_msg
+
+
+def stream_answer_with_callback(
+    query: str,
+    context: str,
+    on_token: Callable[[str], None],
+    on_complete: Callable[[str], None] | None = None,
+    on_error: Callable[[Exception], None] | None = None,
+) -> None:
+    """
+    Stream an answer with callbacks (for async UI updates).
+    
+    Args:
+        query: The user's question
+        context: The context text
+        on_token: Called for each token
+        on_complete: Called when streaming completes with full answer
+        on_error: Called if an error occurs
+    """
+    try:
+        full_answer = []
+        for token in stream_answer(query, context):
+            full_answer.append(token)
+            on_token(token)
+        
+        if on_complete:
+            on_complete("".join(full_answer))
+            
+    except Exception as e:
+        logger.error("Stream error: %s", e)
+        if on_error:
+            on_error(e)
+
+
+def extract_answer_streaming(
+    query: str,
+    chunk_text: str,
+    on_token: Callable[[str], None] | None = None,
+) -> dict:
+    """
+    Extract answer with optional streaming output.
+    
+    Same as extract_answer_from_chunk but streams the response.
+    Returns the same dict format for compatibility.
+    """
+    client = get_client()
+    
+    system_prompt = """You are an extraction engine. Extract the answer from the text.
+Respond in JSON: {"answer": "...", "confidence": 0.0-1.0}
+If no answer, use {"answer": "NONE", "confidence": 0.0}"""
+
+    user_prompt = f"""Question: {query}
+
+Text: {chunk_text}
+
+Extract the shortest answer span. JSON only:"""
+
+    try:
+        stream = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=150,
+            stream=True,
+        )
+        
+        full_response = []
+        
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                token = chunk.choices[0].delta.content
+                full_response.append(token)
+                if on_token:
+                    on_token(token)
+        
+        content = "".join(full_response).strip()
+        
+        # Parse JSON
+        if content.startswith("```"):
+            lines = content.split("\n")
+            content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
+            content = content.strip()
+        
+        result = json.loads(content)
+        answer = result.get("answer", "NONE")
+        confidence = float(result.get("confidence", 0.0))
+        
+        if not answer or answer.upper() == "NONE":
+            return {"answer": "NONE", "confidence": 0.0}
+        
+        return {"answer": answer, "confidence": min(max(confidence, 0.0), 1.0)}
+        
+    except Exception as e:
+        logger.warning("Streaming extraction failed: %s", e)
+        return {"answer": "NONE", "confidence": 0.0}

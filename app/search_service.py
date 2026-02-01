@@ -13,7 +13,10 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+# Import startup to trigger auto-initialization (migrations, etc.)
+import app.startup  # noqa: F401
 
 from app.config import INDEX_PATH, RESEARCH_PATH, ensure_data_dir
 from app.embeddings import EmbeddingGenerator
@@ -26,6 +29,13 @@ from app.rag_answerer import (
 )
 from app.research_store import ResearchEntry, ResearchStore
 from app.vector_store import FAISSVectorStore
+
+# Import document utilities for source highlighting
+try:
+    from app.document_utils import find_answer_location
+    DOCUMENT_UTILS_AVAILABLE = True
+except ImportError:
+    DOCUMENT_UTILS_AVAILABLE = False
 
 logger = logging.getLogger("rag")
 
@@ -90,19 +100,29 @@ class SearchService:
         
         # If extraction found an answer
         if answer_payload.get("answerable", False):
+            answer_text = answer_payload.get("answer", "")
+            filepath = answer_payload.get("filepath", documents[0].get("filepath", "") if documents else "")
+            
             response = {
-                "answer": answer_payload.get("answer", ""),
+                "answer": answer_text,
                 "confidence": answer_payload.get("confidence", 0.0),
                 "confidence_level": _to_str(answer_payload.get("confidence_level", EvidenceConfidence.NONE)),
                 "source": answer_payload.get("source", documents[0].get("filename", "") if documents else ""),
-                "filepath": answer_payload.get("filepath", documents[0].get("filepath", "") if documents else ""),
+                "filepath": filepath,
                 "mode": intent.value,
                 "answerable": True,
                 "documents": documents,
             }
             
+            # Add source location info for highlighting
+            if DOCUMENT_UTILS_AVAILABLE and answer_text and filepath:
+                location = find_answer_location(filepath, answer_text)
+                if location:
+                    response["source_page"] = location.get("page")
+                    response["source_context"] = location.get("context")
+            
             # Write to research memory
-            self._write_research_entry(query, answer_payload.get("answer", ""), results[:1])
+            self._write_research_entry(query, answer_text, results[:1])
             return response
         
         # Extraction failed — return documents with abstain message
@@ -242,6 +262,108 @@ class SearchService:
         embedding = self.embedder.embed([entry_text])
         if self.research.add_entry(embedding, entry):
             self.research.save()
+
+    def answer_streaming(
+        self,
+        query: str,
+        on_documents: Callable[[list[dict]], None] | None = None,
+        on_status: Callable[[str], None] | None = None,
+        on_answer_token: Callable[[str], None] | None = None,
+        on_complete: Callable[[dict], None] | None = None,
+        top_k: int = 6,
+    ) -> dict[str, Any]:
+        """
+        Streaming version of answer() with progressive callbacks.
+        
+        Args:
+            query: The search query
+            on_documents: Called when documents are retrieved (before extraction)
+            on_status: Called with status updates ("Searching...", "Extracting...")
+            on_answer_token: Called for each character of the answer (typewriter effect)
+            on_complete: Called when search is complete with full result
+            top_k: Number of results to return
+        
+        Returns:
+            Same payload as answer()
+        """
+        if on_status:
+            on_status("Searching...")
+        
+        intent = classify_query(query)
+        
+        # Stage A: FAISS retrieval
+        results = self._retrieve(query, k=max(top_k * 4, 20))
+        
+        if not results:
+            result = self._empty_response(intent)
+            if on_complete:
+                on_complete(result)
+            return result
+        
+        # Build document list and notify UI immediately
+        documents = self._build_document_list(results, limit=top_k)
+        if on_documents:
+            on_documents(documents)
+        
+        # For exploratory queries, skip answer extraction
+        if intent == QueryIntent.FULLTEXT:
+            result = self._documents_only_response(documents, intent)
+            if on_complete:
+                on_complete(result)
+            return result
+        
+        if on_status:
+            on_status("Extracting answer...")
+        
+        # Prepare chunks and extract answer
+        top_chunks = self._prepare_chunks_for_extraction(results[:8])
+        answer_payload = extract_best_answer(query=query, chunks=top_chunks)
+        
+        # Build final response
+        if answer_payload.get("answerable", False):
+            answer_text = answer_payload.get("answer", "")
+            filepath = answer_payload.get("filepath", documents[0].get("filepath", "") if documents else "")
+            
+            response = {
+                "answer": answer_text,
+                "confidence": answer_payload.get("confidence", 0.0),
+                "confidence_level": _to_str(answer_payload.get("confidence_level", EvidenceConfidence.NONE)),
+                "source": answer_payload.get("source", documents[0].get("filename", "") if documents else ""),
+                "filepath": filepath,
+                "mode": intent.value,
+                "answerable": True,
+                "documents": documents,
+            }
+            
+            # Add source location info
+            if DOCUMENT_UTILS_AVAILABLE and answer_text and filepath:
+                location = find_answer_location(filepath, answer_text)
+                if location:
+                    response["source_page"] = location.get("page")
+                    response["source_context"] = location.get("context")
+            
+            # Stream the answer character by character
+            if on_answer_token and answer_text:
+                for char in answer_text:
+                    on_answer_token(char)
+            
+            self._write_research_entry(query, answer_text, results[:1])
+        else:
+            response = {
+                "answer": answer_payload.get("answer", "Answer not clearly found in your indexed documents."),
+                "confidence": 0.0,
+                "confidence_level": "none",
+                "source": documents[0].get("filename", "") if documents else "",
+                "filepath": documents[0].get("filepath", "") if documents else "",
+                "mode": intent.value,
+                "answerable": False,
+                "documents": documents,
+            }
+        
+        if on_complete:
+            on_complete(response)
+        
+        return response
 
 
 # =============================================================================
