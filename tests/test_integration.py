@@ -3,9 +3,7 @@ Integration Tests for the full RAG pipeline.
 
 Tests the complete flow from document ingestion to answer extraction.
 """
-import tempfile
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import numpy as np
@@ -47,7 +45,6 @@ class TestFullPipeline:
     def test_ingestion_to_chunks(self, test_workspace):
         """Test document ingestion produces correct chunks."""
         from app.ingestion import DocumentIngester
-        from app.chunker import chunk
         
         ingester = DocumentIngester(test_workspace["docs"])
         documents = ingester.ingest_all()
@@ -149,7 +146,7 @@ class TestQueryFiltersIntegration:
 
     def test_parse_and_filter_pdf_query(self):
         """Test parsing PDF filter from query."""
-        from app.query_filters import parse_query, apply_filters_to_results
+        from app.query_filters import parse_query
         
         filters = parse_query("PDFs from last week")
         
@@ -301,7 +298,6 @@ class TestPrivacyIntegration:
     def test_data_deletion(self, temp_dir):
         """Test data deletion."""
         from app.privacy import PrivacyManager
-        import json
         
         # Create test data
         (temp_dir / "scan_manifest.json").write_text("{}")

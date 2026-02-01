@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import logging
-from functools import lru_cache
+from typing import Generator, Callable
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -170,8 +170,6 @@ def is_available() -> bool:
 # ============================================================================
 # Streaming Support
 # ============================================================================
-
-from typing import Generator, Callable
 
 
 def stream_answer(

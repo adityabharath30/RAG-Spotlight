@@ -15,7 +15,6 @@ import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from app.config import DATA_DIR, INDEX_PATH, ensure_data_dir
 from app.security import get_audit_logger

@@ -44,11 +44,11 @@ except ImportError:
     print("⚠️  watchdog not installed. Install with: pip install watchdog")
 
 from app.config import INDEX_PATH, DATA_DIR, ensure_data_dir
-from app.ingestion import DocumentIngester, SUPPORTED_EXTENSIONS, IMAGE_EXTENSIONS
+from app.ingestion import DocumentIngester, SUPPORTED_EXTENSIONS
 from app.chunker import chunk
 from app.embeddings import EmbeddingGenerator
 from app.vector_store import FAISSVectorStore
-from app.scanner import FileScanner, ScanManifest, ScannedFile
+from app.scanner import FileScanner, ScannedFile
 from app.scanner_config import get_config, reload_config, ScannerConfig
 
 # Import startup to trigger auto-initialization (migrations, etc.)
@@ -66,7 +66,7 @@ except ImportError:
 
 # Import SQLite manifest if available
 try:
-    from app.manifest_db import SQLiteManifest
+    from app.manifest_db import SQLiteManifest  # noqa: F401
     SQLITE_MANIFEST_AVAILABLE = True
 except ImportError:
     SQLITE_MANIFEST_AVAILABLE = False
@@ -281,7 +281,7 @@ class DeviceIndexer:
         self.manifest.mark_full_scan_complete()
         
         print("\n" + "=" * 60)
-        print(f"✅ Full scan complete!")
+        print("✅ Full scan complete!")
         print(f"   Files processed: {files_processed}")
         print(f"   Chunks added: {total_chunks}")
         print("=" * 60)

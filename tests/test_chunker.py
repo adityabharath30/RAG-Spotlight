@@ -1,7 +1,6 @@
 """
 Tests for the chunker module.
 """
-import pytest
 from app.chunker import chunk
 
 

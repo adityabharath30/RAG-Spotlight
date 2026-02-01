@@ -12,7 +12,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Generator, Any
+from typing import Generator
 
 logger = logging.getLogger("rag")
 

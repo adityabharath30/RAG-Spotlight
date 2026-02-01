@@ -2,15 +2,12 @@
 Tests for the ingestion module.
 """
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from app.ingestion import (
     DocumentIngester,
     SUPPORTED_EXTENSIONS,
     IMAGE_EXTENSIONS,
-    MIN_IMAGE_WIDTH,
-    MIN_IMAGE_HEIGHT,
 )
 
 
@@ -122,7 +119,7 @@ class TestDocumentIngester:
 
     def test_image_dimension_check_large(self, temp_dir):
         """Large images should be accepted."""
-        ingester = DocumentIngester(temp_dir)
+        _ingester = DocumentIngester(temp_dir)  # noqa: F841
         
         # Mock PIL to return large dimensions
         with patch("PIL.Image.open") as mock_open:

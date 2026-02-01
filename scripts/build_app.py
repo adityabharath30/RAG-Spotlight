@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -232,7 +231,7 @@ sips -z 1024 1024 icon.png --out icon.iconset/icon_512x512@2x.png
 iconutil -c icns icon.iconset
 ```
 """)
-        print(f"✅ Created assets directory with instructions")
+        print("✅ Created assets directory with instructions")
 
 
 def main():
@@ -276,7 +275,7 @@ def main():
     
     # Create DMG if requested
     if args.dmg:
-        dmg_path = create_dmg(app_path)
+        create_dmg(app_path)
     
     # Summary
     print("\n" + "=" * 60)

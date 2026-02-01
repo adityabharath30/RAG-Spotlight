@@ -1,8 +1,7 @@
 """
 Tests for the RAG answerer module.
 """
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from app.rag_answerer import (
     extract_best_answer,
@@ -12,7 +11,6 @@ from app.rag_answerer import (
     normalize_whitespace,
     fix_pdf_spacing,
     AnswerCandidate,
-    EvidenceConfidence,
 )
 
 
@@ -106,7 +104,7 @@ class TestAnswerExtraction:
             "filepath": "/docs/price.txt",
         }
         
-        result = propose_answer_from_chunk("How much does it cost?", chunk)
+        _result = propose_answer_from_chunk("How much does it cost?", chunk)  # noqa: F841
         # May or may not find answer depending on regex patterns
         # Just verify it doesn't crash
 

@@ -63,7 +63,7 @@ jobs:
           pip install ruff
 
       - name: Run Ruff linter
-        run: ruff check app/ scripts/ tests/ --ignore E501
+        run: ruff check app/ scripts/ tests/ --ignore E501,E402
 
       - name: Run Ruff formatter check
         run: ruff format --check app/ scripts/ tests/ || true
